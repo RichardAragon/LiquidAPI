@@ -1,9 +1,6 @@
 # LiquidAPI
 
-Liquid API
-Show Image
-Show Image
-Overview
+## Overview
 Liquid API is an intelligent API integration framework that combines the power of Language Models (LLMs) with swarm algorithms to enable seamless communication between incompatible applications. It's designed to solve complex business integration scenarios where traditional API approaches fall short.
 Key Features
 
