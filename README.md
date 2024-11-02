@@ -2,7 +2,7 @@
 
 ## Overview
 Liquid API is an intelligent API integration framework that combines the power of Language Models (LLMs) with swarm algorithms to enable seamless communication between incompatible applications. It's designed to solve complex business integration scenarios where traditional API approaches fall short.
-Key Features
+## Key Features
 
 🤖 LLM-Powered Decision Making: Intelligent routing and data transformation using small, efficient language models
 🔄 Flexible Adapter System: Easy-to-implement adapters for any API endpoint
@@ -12,7 +12,7 @@ Key Features
 🔄 Automatic Retries: Built-in retry mechanisms for reliable operations
 
 
-Requirements
+## Requirements
 
 Python 3.8+
 PyTorch
@@ -20,7 +20,7 @@ transformers
 aiohttp
 pyyaml
 
-Quick Start
+## Quick Start
 1. Create Configuration File
 Create a config.yml file:
 yamlCopymodel_name: "HuggingFaceTB/SmolLM2-135M"
@@ -83,7 +83,7 @@ class CustomAdapter(APIAdapter):
     async def transform_response(self, response):
         # Transform incoming data
         return response
-Advanced Configuration
+## Advanced Configuration
 Environment Variables
 Liquid API supports environment variables in configuration:
 yamlCopyadapters:
@@ -99,7 +99,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
-Real-World Examples
+## Real-World Examples
 CRM to ERP Integration
 pythonCopy# Define custom adapters
 class CRMAdapter(APIAdapter):
@@ -131,25 +131,25 @@ except Exception as e:
     # Implement fallback logic
 Best Practices
 
-Configuration Management
+## Configuration Management
 
 Store sensitive data in environment variables
 Use separate configurations for development/production
 
 
-Error Handling
+## Error Handling
 
 Implement comprehensive error handling
 Use the built-in retry mechanism for transient failures
 
 
-Performance
+## Performance
 
 Utilize async/await for I/O-bound operations
 Configure appropriate timeouts
 
 
-Security
+## Security
 
 Regularly rotate API keys
 Implement rate limiting
@@ -157,7 +157,7 @@ Use HTTPS for all API endpoints
 
 
 
-Contributing
+## Contributing
 We welcome contributions! Please see our Contributing Guide for details.
 
 Fork the repository
@@ -166,5 +166,5 @@ Commit your changes
 Push to the branch
 Create a Pull Request
 
-License
+## License
 This project is licensed under the MIT License - see the LICENSE file for details.
