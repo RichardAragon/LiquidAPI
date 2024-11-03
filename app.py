@@ -1,20 +1,25 @@
 import torch
 import json
-import requests
 import logging
 import asyncio
 import aiohttp
 import yaml
-from typing import Dict, List, Any, Optional, Union, Type
+import os
+from typing import Dict, Any, Optional, Type
 from dataclasses import dataclass
 from datetime import datetime
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from abc import ABC, abstractmethod
+from aiohttp import web
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler("liquid_api.log")
+    ]
 )
 logger = logging.getLogger('LiquidAPI')
 
@@ -62,8 +67,16 @@ class LLMBrain:
                 output_scores=True
             )
             
-            decision = self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
-            confidence = torch.mean(torch.stack([torch.max(score) for score in outputs.scores])).item()
+            decision_text = self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)
+            
+            # Attempt to parse the decision as JSON
+            try:
+                decision = json.loads(decision_text)
+                confidence = torch.mean(torch.stack([torch.max(score) for score in outputs.scores])).item()
+            except json.JSONDecodeError:
+                logger.error("LLM decision is not in valid JSON format.")
+                decision = {"action_to_take": "default"}
+                confidence = 0.0
             
             return {
                 "decision": decision,
@@ -75,7 +88,7 @@ class LLMBrain:
             raise
 
     def _construct_prompt(self, context: Dict[str, Any], task_description: str) -> str:
-        return f"""As an API integration coordinator, analyze this context and provide a solution:
+        return f"""As an API integration coordinator, analyze this context and provide a solution in JSON format:
 
 Context:
 {json.dumps(context, indent=2)}
@@ -83,11 +96,11 @@ Context:
 Task:
 {task_description}
 
-Provide a structured response with:
-1. Action to take
-2. Required transformations
-3. Error handling considerations
-4. Success criteria"""
+Provide a structured JSON response with the following fields:
+1. action_to_take: Describe the action to take.
+2. required_transformations: List any data transformations required.
+3. error_handling: Describe error handling considerations.
+4. success_criteria: Define success criteria."""
 
 class APIAdapter(ABC):
     """Abstract base class for API adapters"""
@@ -218,7 +231,7 @@ class LiquidAPI:
         target_adapter: str,
         context: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Orchestrate integration between two APIs"""
+        """Orchestrate integration between two APIs based on LLM decisions"""
         if source_adapter not in self.adapters or target_adapter not in self.adapters:
             raise ValueError("Invalid adapter specified")
 
@@ -228,15 +241,58 @@ class LiquidAPI:
             f"Integrate data between {source_adapter} and {target_adapter}"
         )
 
+        decision = analysis.get("decision", {})
+        confidence = analysis.get("confidence", 0.0)
+
+        logger.info(f"LLM Decision: {decision} with confidence {confidence}")
+
+        if confidence < 0.5:
+            logger.warning("Low confidence in LLM decision. Aborting integration.")
+            return {
+                "analysis": analysis,
+                "result": None,
+                "status": "aborted_due_to_low_confidence",
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        action = decision.get("action_to_take", "default")
+        required_transformations = decision.get("required_transformations", [])
+        error_handling = decision.get("error_handling", {})
+        success_criteria = decision.get("success_criteria", {})
+
+        logger.info(f"Action to take: {action}")
+        logger.info(f"Required transformations: {required_transformations}")
+        logger.info(f"Error handling considerations: {error_handling}")
+        logger.info(f"Success criteria: {success_criteria}")
+
+        # Execute the integration based on the action
+        if action == "default":
+            logger.info("Performing default integration steps.")
+        else:
+            logger.info(f"Performing action: {action}")
+            # Implement additional actions as needed
+
         # Execute the integration
         async with self.adapters[source_adapter] as source, \
                    self.adapters[target_adapter] as target:
             
             # Get data from source
             source_data = await source.execute()
+            logger.info(f"Data from source ({source_adapter}): {source_data}")
             
+            # Apply required transformations
+            for transformation in required_transformations:
+                # Implement transformation logic here
+                logger.info(f"Applying transformation: {transformation}")
+                # Example: if transformation == "map_fields", perform mapping
+
             # Transform and send to target
             result = await target.execute(source_data)
+            logger.info(f"Result from target ({target_adapter}): {result}")
+
+            # Evaluate success criteria
+            # Implement success criteria evaluation here
+            logger.info(f"Evaluating success criteria: {success_criteria}")
 
             return {
                 "analysis": analysis,
@@ -264,13 +320,53 @@ class LiquidAPI:
             if not adapter_class:
                 logger.error(f"Adapter type '{adapter_type}' is not registered.")
                 continue
+            # Replace environment variable placeholders
+            auth = adapter_config['config'].get('auth', {})
+            for key, value in auth.items():
+                if isinstance(value, str) and value.startswith("${") and value.endswith("}"):
+                    env_var = value[2:-1]
+                    auth[key] = os.getenv(env_var, "")
+            adapter_config['config']['auth'] = auth
             adapter_instance = adapter_class(APIConfig(**adapter_config['config']))
             instance.register_adapter(adapter_name, adapter_instance)
         
         return instance
 
+# Mock API server implementations
+
+async def handle_crm(request):
+    data = await request.json()
+    logger.info(f"Mock CRM received data: {data}")
+    return web.json_response({"status": "success", "message": "CRM data processed."})
+
+async def handle_erp(request):
+    data = await request.json()
+    logger.info(f"Mock ERP received data: {data}")
+    return web.json_response({"status": "success", "confirmation_number": "CONF123456"})
+
+def run_mock_servers():
+    app_crm = web.Application()
+    app_crm.router.add_post('/data', handle_crm)
+    runner_crm = web.AppRunner(app_crm)
+    asyncio.create_task(start_server(runner_crm, 8081))
+
+    app_erp = web.Application()
+    app_erp.router.add_put('/update', handle_erp)
+    runner_erp = web.AppRunner(app_erp)
+    asyncio.create_task(start_server(runner_erp, 8082))
+
+async def start_server(runner, port):
+    await runner.setup()
+    site = web.TCPSite(runner, 'localhost', port)
+    await site.start()
+    logger.info(f"Mock server running on http://localhost:{port}")
+
 # Example usage
 async def main():
+    # Start mock servers
+    run_mock_servers()
+    await asyncio.sleep(1)  # Wait a moment for servers to start
+
     # Example configuration (usually loaded from 'config.yml')
     example_config = {
         'model_name': "HuggingFaceTB/SmolLM2-135M",
@@ -279,7 +375,7 @@ async def main():
                 'name': 'crm_adapter',
                 'type': 'crm_adapter',
                 'config': {
-                    'url': 'https://api.crm.example.com/data',
+                    'url': 'http://localhost:8081/data',
                     'method': 'POST',
                     'headers': {'Content-Type': 'application/json'},
                     'auth': {'login': 'user', 'password': 'pass'},
@@ -291,7 +387,7 @@ async def main():
                 'name': 'erp_adapter',
                 'type': 'erp_adapter',
                 'config': {
-                    'url': 'https://api.erp.example.com/update',
+                    'url': 'http://localhost:8082/update',
                     'method': 'PUT',
                     'headers': {'Content-Type': 'application/json'},
                     'auth': {'login': 'erp_user', 'password': 'erp_pass'},
@@ -329,6 +425,9 @@ async def main():
         logger.info(f"Integration completed: {json.dumps(result, indent=2)}")
     except Exception as e:
         logger.error(f"Integration failed: {e}")
+
+    # Keep the mock servers running for demonstration
+    await asyncio.sleep(2)
 
 if __name__ == "__main__":
     asyncio.run(main())
