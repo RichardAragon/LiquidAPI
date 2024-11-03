@@ -1,0 +1,26 @@
+model_name: "HuggingFaceTB/SmolLM2-135M"
+adapters:
+  - name: "crm_adapter"
+    type: "crm_adapter"
+    config:
+      url: "https://api.crm.example.com/data"
+      method: "POST"
+      headers:
+        Content-Type: "application/json"
+      auth:
+        login: "user"
+        password: "pass"
+      retry_attempts: 3
+      timeout: 10
+  - name: "erp_adapter"
+    type: "erp_adapter"
+    config:
+      url: "https://api.erp.example.com/update"
+      method: "PUT"
+      headers:
+        Content-Type: "application/json"
+      auth:
+        login: "erp_user"
+        password: "erp_pass"
+      retry_attempts: 3
+      timeout: 15
