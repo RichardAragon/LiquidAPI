@@ -5,7 +5,7 @@ import logging
 import asyncio
 import aiohttp
 import yaml
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict, List, Any, Optional, Union, Type
 from dataclasses import dataclass
 from datetime import datetime
 from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -93,7 +93,7 @@ class APIAdapter(ABC):
     """Abstract base class for API adapters"""
     def __init__(self, config: APIConfig):
         self.config = config
-        self.session = None
+        self.session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self):
         self.session = aiohttp.ClientSession(
@@ -124,7 +124,8 @@ class APIAdapter(ABC):
                 async with self.session.request(
                     self.config.method,
                     self.config.url,
-                    json=transformed_data if data else None
+                    json=transformed_data if data else None,
+                    auth=aiohttp.BasicAuth(**self.config.auth) if self.config.auth else None
                 ) as response:
                     response.raise_for_status()
                     result = await response.json()
@@ -133,9 +134,75 @@ class APIAdapter(ABC):
                 logger.error(f"API call attempt {attempt + 1} failed: {e}")
                 if attempt == self.config.retry_attempts - 1:
                     raise
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+
+# Example concrete adapter implementations
+
+class CRMAdapter(APIAdapter):
+    """Concrete APIAdapter for CRM system"""
+    async def transform_request(self, data: Any) -> Any:
+        # Example transformation: map internal fields to CRM API fields
+        if data:
+            transformed = {
+                "customer_number": data.get("erp_customer_number"),
+                "order_info": data.get("sales_order")
+            }
+            logger.debug(f"CRMAdapter transformed request: {transformed}")
+            return transformed
+        return {}
+
+    async def transform_response(self, response: Any) -> Any:
+        # Example transformation: extract relevant information from CRM response
+        transformed = {
+            "crm_status": response.get("status"),
+            "crm_message": response.get("message")
+        }
+        logger.debug(f"CRMAdapter transformed response: {transformed}")
+        return transformed
+
+class ERPAdapter(APIAdapter):
+    """Concrete APIAdapter for ERP system"""
+    async def transform_request(self, data: Any) -> Any:
+        # Example transformation: map internal fields to ERP API fields
+        if data:
+            transformed = {
+                "erp_customer_id": data.get("customer_id"),
+                "erp_order_details": data.get("order_details")
+            }
+            logger.debug(f"ERPAdapter transformed request: {transformed}")
+            return transformed
+        return {}
+
+    async def transform_response(self, response: Any) -> Any:
+        # Example transformation: extract relevant information from ERP response
+        transformed = {
+            "erp_status": response.get("status"),
+            "erp_confirmation": response.get("confirmation_number")
+        }
+        logger.debug(f"ERPAdapter transformed response: {transformed}")
+        return transformed
+
+class GenericAPIAdapter(APIAdapter):
+    """A generic adapter for APIs that do not require special transformations"""
+    async def transform_request(self, data: Any) -> Any:
+        # No transformation
+        logger.debug(f"GenericAPIAdapter passing through request data: {data}")
+        return data
+
+    async def transform_response(self, response: Any) -> Any:
+        # No transformation
+        logger.debug(f"GenericAPIAdapter passing through response data: {response}")
+        return response
 
 class LiquidAPI:
     """Main orchestrator for intelligent API integration"""
+    adapter_registry: Dict[str, Type[APIAdapter]] = {
+        "crm_adapter": CRMAdapter,
+        "erp_adapter": ERPAdapter,
+        "generic_adapter": GenericAPIAdapter
+        # Add more adapters here as needed
+    }
+
     def __init__(self, brain: LLMBrain):
         self.brain = brain
         self.adapters: Dict[str, APIAdapter] = {}
@@ -191,13 +258,54 @@ class LiquidAPI:
         
         # Load adapters from config
         for adapter_config in config.get('adapters', []):
-            adapter = APIAdapter(APIConfig(**adapter_config['config']))
-            instance.register_adapter(adapter_config['name'], adapter)
+            adapter_name = adapter_config['name']
+            adapter_type = adapter_config.get('type', 'generic_adapter')
+            adapter_class = cls.adapter_registry.get(adapter_type)
+            if not adapter_class:
+                logger.error(f"Adapter type '{adapter_type}' is not registered.")
+                continue
+            adapter_instance = adapter_class(APIConfig(**adapter_config['config']))
+            instance.register_adapter(adapter_name, adapter_instance)
         
         return instance
 
 # Example usage
 async def main():
+    # Example configuration (usually loaded from 'config.yml')
+    example_config = {
+        'model_name': "HuggingFaceTB/SmolLM2-135M",
+        'adapters': [
+            {
+                'name': 'crm_adapter',
+                'type': 'crm_adapter',
+                'config': {
+                    'url': 'https://api.crm.example.com/data',
+                    'method': 'POST',
+                    'headers': {'Content-Type': 'application/json'},
+                    'auth': {'login': 'user', 'password': 'pass'},
+                    'retry_attempts': 3,
+                    'timeout': 10
+                }
+            },
+            {
+                'name': 'erp_adapter',
+                'type': 'erp_adapter',
+                'config': {
+                    'url': 'https://api.erp.example.com/update',
+                    'method': 'PUT',
+                    'headers': {'Content-Type': 'application/json'},
+                    'auth': {'login': 'erp_user', 'password': 'erp_pass'},
+                    'retry_attempts': 3,
+                    'timeout': 15
+                }
+            }
+        ]
+    }
+
+    # For demonstration, write the example config to 'config.yml'
+    with open('config.yml', 'w') as f:
+        yaml.dump(example_config, f)
+
     # Create Liquid API instance
     liquid_api = LiquidAPI.from_config('config.yml')
     
@@ -212,13 +320,15 @@ async def main():
     }
     
     # Execute integration
-    result = await liquid_api.integrate(
-        source_adapter="crm_adapter",
-        target_adapter="erp_adapter",
-        context=context
-    )
-    
-    logger.info(f"Integration completed: {json.dumps(result, indent=2)}")
+    try:
+        result = await liquid_api.integrate(
+            source_adapter="crm_adapter",
+            target_adapter="erp_adapter",
+            context=context
+        )
+        logger.info(f"Integration completed: {json.dumps(result, indent=2)}")
+    except Exception as e:
+        logger.error(f"Integration failed: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
